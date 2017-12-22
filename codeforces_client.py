@@ -3,11 +3,11 @@
 
 import configparser
 import curses
-import html.parser
 import json
 import os
 import re
-import requests
+import selenium.webdriver
+import urllib.request
 import enum
 
 
@@ -25,98 +25,33 @@ class CodeforcesClient:
             codeforces_api_url=None,
         ):
         if codeforces_url[-1] != "/":
-            self.codeforces_url = codeforces_url + "/"
+            self._codeforces_url = codeforces_url + "/"
         else:
-            self.codeforces_url = codeforces_url
+            self._codeforces_url = codeforces_url
 
         if codeforces_api_url is None:
-            self.codeforces_api_url = codeforces_url + "api/"
+            self._codeforces_api_url = codeforces_url + "api/"
         else:
-            self.codeforces_api_url = codeforces_api_url
-
-        self.client = requests.session()
-        
-        self.user_agent = "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " \
-                          "Chrome/61.0.3163.100 Safari/537.36"
+            self._codeforces_api_url = codeforces_api_url
 
         self._logged_in = False
+
+        chrome_options = selenium.webdriver.ChromeOptions()
+        chrome_options.add_argument("-incognito")
+        self._client = selenium.webdriver.Chrome(options=chrome_options)
 
     @property
     def logged_in(self):
         return self._logged_in
 
     def login(self, username, password):
-        """Log in to Codeforces; returning True if successful, else False."""
-        # Get JSESSIONID cookie
-        jsessionid_cookie = self.client.get(self.codeforces_url).cookies.get("JSESSIONID")
-
-        # Fetch enter page
-        response = self.client.get(
-            self.codeforces_url + "enter/",
-            headers={
-                #"Cookie": "JSESSIONID=" + jsessionid_cookie,# + ";",
-                "Cookie":  "JSESSIONID=66B12C57458DB8F56666161D6FA63493-n1;",# 39ce7=CFCVUxeg; _ym_uid=1513810494240245679; evercookie_png=jvlcx1hxz7gqq0dliy; evercookie_etag=jvlcx1hxz7gqq0dliy; evercookie_cache=jvlcx1hxz7gqq0dliy; 70a7c28f3de=jvlcx1hxz7gqq0dliy; _ym_isad=1; __utmt=1; __utma=71512449.726423494.1513810493.1513810493.1513810889.2; __utmb=71512449.2.10.1513810889; __utmc=71512449; __utmz=71512449.1513810889.2.2.utmcsr=google|utmccn=(organic)|utmcmd=organic|utmctr=(not%20provided)",
-            },
-        )
-        if not response.ok:
-            return False
-
-        # What follows is code to parse the needed information as of 2017/12/20
-
-        enter_page = response.text
-
-        # Find the enterForm form tag
-        enter_form_tag_index = enter_page.find("""<form method="post" action="" id="enterForm">""")
-
-        # Extract the CSRF
-        enter_csrf_prelim = """id="enterForm"><input type='hidden' name='csrf_token' value='"""
-        prelim_index = enter_page.find(
-            enter_csrf_prelim,
-            enter_form_tag_index,
-        )
-        csrf_token_index = prelim_index + len(enter_csrf_prelim)
-        csrf_token = enter_page[csrf_token_index:enter_page.find("'", csrf_token_index)]
-
-        # Extract the FTAA
-        ftaa_token = re.search(
-            """window._ftaa = "(.+?)";""",
-            enter_page,
-        ).groups()[0]
-
-        # Extract the BFAA
-        bfaa_token = re.search(
-            """window._bfaa = "(.+?)";""",
-            enter_page,
-        ).groups()[0]
-
-        # Extract the TTA
-
-        # Now use that payload to log in
-
-        payload = {
-            "handle": username,
-            "password": password,
-            "csrf_token": csrf_token,
-            "_tta": 5,
-            "action": "enter",
-            "bfaa": bfaa_token,
-            "ftaa": ftaa_token,
-        }
-
-        print(payload)
-
-        headers = {
-            "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                          "Chrome/61.0.3163.100 Safari/537.36",
-        }
-
-        print(
-            self.client.post(
-                url=self.codeforces_url + "enter/",
-                headers=headers,
-                data=json.dumps(payload),
-            ).text
-        )
+        """Attempt to log in to the Codeforces website."""
+        self._client.get(self._codeforces_url + "enter")
+        enter_form = self._client.find_element_by_id("enterForm")
+        enter_form.find_element_by_id("handle").send_keys(username)
+        enter_form.find_element_by_id("password").send_keys(password)
+        enter_form.find_element_by_class_name("submit").click()
+        self._logged_in = self._client.current_url == self._codeforces_url
 
 
 #def get_problems():
@@ -261,7 +196,7 @@ if __name__ == "__main__":
     FILE_PATH = os.path.dirname(os.path.realpath(__file__))
 
     CONFIG = configparser.ConfigParser()
-    CONFIG.read(os.path.join(FILE_PATH, "codeforces.cfg"))
+    CONFIG.read(os.path.join(FILE_PATH, ".codeforces_client.cfg"))
     KEY = CONFIG["Codeforces"]["key"]
     SECRET = CONFIG["Codeforces"]["secret"]
     USERNAME = CONFIG["Codeforces"]["username"]
