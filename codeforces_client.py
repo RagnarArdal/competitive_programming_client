@@ -40,6 +40,9 @@ class CodeforcesClient:
         chrome_options.add_argument("-incognito")
         self._client = selenium.webdriver.Chrome(options=chrome_options)
 
+    def __del__(self):
+        self._client.close()
+
     @property
     def logged_in(self):
         return self._logged_in
@@ -53,38 +56,37 @@ class CodeforcesClient:
         enter_form.find_element_by_class_name("submit").click()
         self._logged_in = self._client.current_url == self._codeforces_url
 
+    def get_problems(self):
+        response = urllib.request.urlopen(self._codeforces_api_url + "problemset.problems")
+        if response.status == 200:
+            response_dict = json.load(response)
+            if response_dict["status"] == "OK":
+                return_list = []
+                ids_to_indices = {}
 
-#def get_problems():
-#    response = requests.get(CODEFORCES_API_URL + "problemset.problems")
-#    if response.status_code == 200:
-#        response_dict = response.json()
-#        if response_dict["status"] == "OK":
-#            return_list = []
-#            ids_to_indices = {}
-#
-#            problems = response_dict["result"]["problems"]
-#            statistics = response_dict["result"]["problemStatistics"]
-#
-#            assert len(problems) == len(statistics)
-#
-#            for problem in problems:
-#                contest_id = problem["contestId"]
-#                index = problem["index"]
-#                assert isinstance(contest_id, int) and 0 < contest_id < 99999
-#                assert isinstance(index, str) and len(index) in range(1, 4), index
-#                ids_to_indices[(contest_id, index)] = len(return_list)
-#                return_list.append(problem)
-#
-#            for statistic in statistics:
-#                contest_id = statistic["contestId"]
-#                index = statistic["index"]
-#                return_index = ids_to_indices[(contest_id, index)]
-#                return_list[return_index]["solvedCount"] = statistic["solvedCount"]
-#
-#            assert all("solvedCount" in problem for problem in return_list)
-#
-#            return return_list
-#    raise ResponseError
+                problems = response_dict["result"]["problems"]
+                statistics = response_dict["result"]["problemStatistics"]
+
+                assert len(problems) == len(statistics)
+
+                for problem in problems:
+                    contest_id = problem["contestId"]
+                    index = problem["index"]
+                    assert isinstance(contest_id, int) and 0 < contest_id < 99999
+                    assert isinstance(index, str) and len(index) in range(1, 4), index
+                    ids_to_indices[(contest_id, index)] = len(return_list)
+                    return_list.append(problem)
+
+                for statistic in statistics:
+                    contest_id = statistic["contestId"]
+                    index = statistic["index"]
+                    return_index = ids_to_indices[(contest_id, index)]
+                    return_list[return_index]["solvedCount"] = statistic["solvedCount"]
+
+                assert all("solvedCount" in problem for problem in return_list)
+
+                return return_list
+        raise ResponseError
 #
 #
 #class State(enum.Enum):
@@ -201,8 +203,6 @@ if __name__ == "__main__":
     SECRET = CONFIG["Codeforces"]["secret"]
     USERNAME = CONFIG["Codeforces"]["username"]
     PASSWORD = CONFIG["Codeforces"]["password"]
-    #curses.wrapper(Tool())
-    client = CodeforcesClient()
-    client.login(USERNAME, PASSWORD)
+    curses.wrapper(Tool())
 else:
     raise ImportError("Don't import this for now")
