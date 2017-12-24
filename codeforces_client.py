@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 
 
+import collections
 import configparser
 import curses
 import json
+import math
 import os
-import re
-import selenium.webdriver
+import subprocess
 import urllib.request
-import enum
+
+import selenium.webdriver
 
 
-CODEFORCES_URL = "http://codeforces.com/"
+CODEFORCES_URL = "http://codeforces.com/"  # TODO: Put in configuration file?
 
 
 class ResponseError(Exception):
@@ -56,13 +58,12 @@ class CodeforcesClient:
         enter_form.find_element_by_class_name("submit").click()
         self._logged_in = self._client.current_url == self._codeforces_url
 
-    def get_problems(self):
+    def get_contests(self):
         response = urllib.request.urlopen(self._codeforces_api_url + "problemset.problems")
         if response.status == 200:
             response_dict = json.load(response)
             if response_dict["status"] == "OK":
-                return_list = []
-                ids_to_indices = {}
+                contests = collections.defaultdict(dict)
 
                 problems = response_dict["result"]["problems"]
                 statistics = response_dict["result"]["problemStatistics"]
@@ -72,104 +73,157 @@ class CodeforcesClient:
                 for problem in problems:
                     contest_id = problem["contestId"]
                     index = problem["index"]
-                    assert isinstance(contest_id, int) and 0 < contest_id < 99999
-                    assert isinstance(index, str) and len(index) in range(1, 4), index
-                    ids_to_indices[(contest_id, index)] = len(return_list)
-                    return_list.append(problem)
+                    contests[contest_id][index] = problem
 
                 for statistic in statistics:
                     contest_id = statistic["contestId"]
                     index = statistic["index"]
-                    return_index = ids_to_indices[(contest_id, index)]
-                    return_list[return_index]["solvedCount"] = statistic["solvedCount"]
+                    contests[contest_id][index]["solvedCount"] = statistic["solvedCount"]
 
-                assert all("solvedCount" in problem for problem in return_list)
-
-                return return_list
+                return contests
         raise ResponseError
-#
-#
-#class State(enum.Enum):
-#    SELECTION = enum.auto()
-#
-#
-#def problem_sort_ids(problem):
-#    return (problem["contestId"], problem["index"])
-#
-#
-#def problem_sort_solved(problem):
-#    return problem["solvedCount"]
-#
-#
-#class Tool:
-#    def __init__(self):
-#        self.screen = None
-#        self.max_y = None
-#        self.max_x = None
-#        self.state = State.SELECTION
-#        self.selected = 0  # Selected problem
-#        self.relative = 0  # Relative position in the list
-#        self.list_start = 0
-#
-#    def __call__(self, screen):
-#        self.screen = screen
-#        self.update_yx()
-#        self.main()
-#
-#    def main(self):
-#        if self.screen is None:
-#            raise RuntimeError
-#
-#        self.screen.clear()
-#        self.make_header()
-#        self.screen.refresh()
-#        run = True
-#
-#        problems = get_problems()
-#        problems.sort(key=problem_sort_solved, reverse=True)
-#
-#        while run:
-#            if state == State.SELECTION:
-#                self.selection()
-#
-#    def selection(self):
-#        while True:
-#            c = self.screen.getch()
-#            if c == ord("q"):
-#                run = False
-#                break
-#            elif c == ord("G"):
-#                selected = len(problems) - 1
-#                selected_lo = len(problems) - self.max_y + 1
-#                selected_hi = len(problems) - 1
-#            elif c == curses.KEY_RESIZE:
-#                self.update_yx()
-#                selected_lo = selected
-#                selected_hi = self.max_y - 2
-#            elif c in [ord("j"), curses.KEY_DOWN]:
-#                if selected == len(problems) - 1:
-#                    continue
-#                selected += 1
-#                if selected > selected_hi:
-#                    selected_lo += 1
-#                    selected_hi += 1
-#                    self.clear_list()
-#            elif c in [ord("k"), curses.KEY_UP]:
-#                if selected == 0:
-#                    continue
-#                selected -= 1
-#                if selected < selected_lo:
-#                    selected_lo -= 1
-#                    selected_hi -= 1
-#                    self.clear_list()
-#
-#
-#            self.screen.refresh()
-#
-#    def update_yx(self):
-#        self.max_y, self.max_x = self.screen.getmaxyx()
-#
-#    def update_list(self):
+
+
+class ContestItem(list):
+    def __init__(self, contest_id, iterable):
+        self.expanded = False
+        self.contest_id = contest_id
+        super().__init__(iterable)
+
+    @staticmethod
+    def key_contest_id(contest_item):
+        return contest_item.contest_id
+
+
+class ProblemItem:
+    def __init__(self, problem_dict):
+        self._problem_dict = problem_dict
+        self.index = problem_dict["index"]
+        self.name = problem_dict["name"]
+        self.solved_count = problem_dict["solvedCount"]
+
+    @staticmethod
+    def key_index(problem_item):
+        return problem_item.index
+
+    @staticmethod
+    def key_name(problem_item):
+        return problem_item.name
+
+    @staticmethod
+    def key_solved_count(problem_item):
+        return problem_item.solved_count
+
+
+class Tool:
+    def __init__(
+            self,
+            *,
+            username,
+            password,
+        ):
+        self.username = username
+        self.password = password
+
+        self.screen = None
+        self.max_y = None
+        self.max_x = None
+        self.selected = 0  # Selected problem or contest
+
+        self._codeforces_client = CodeforcesClient()
+
+        self.contests = list(
+            ContestItem(
+                contest_id,
+                (ProblemItem(problem) for problem in problems.values())
+            )
+            for contest_id, problems
+            in self._codeforces_client.get_contests().items()
+        )
+        self.contests.sort(key=ContestItem.key_contest_id)
+        for contest_item in self.contests:
+            contest_item.sort(key=ProblemItem.key_index)
+
+    def __call__(self, screen):
+        self.screen = screen
+        self.main()
+
+    def _handle_resize(self):
+        self.max_y, self.max_x = self.screen.getmaxyx()
+
+    def _move(self, n=0):
+        if n == math.inf:
+            pass  # Move to top
+        elif n == -math.inf:
+            pass  # Move to bottom
+        elif n > 0:
+            pass  # Move down
+        elif n < 0:
+            pass  # Move up
+        else:
+            raise RuntimeError
+
+    def main(self):
+        if self.screen is None:
+            raise RuntimeError
+
+        self.screen.clear()
+        self._handle_resize()
+
+        #subprocess.call(["vim", "codeforces_client.py"])
+
+        count = 0
+        history = collections.deque(maxlen=10)
+
+        while True:
+            c = self.screen.getch()
+
+            # Handle numbers, they modify count
+            if c in range(ord("0"), ord("9") + 1):
+                count = 10*count + int(c)
+                history.appendleft(c)
+                continue
+
+            # The resizing is a bit of a special case
+            if c == curses.KEY_RESIZE:
+                self._handle_resize()
+                continue  # Don't care to add to history or destroy count
+            # Move down some
+            elif c in (ord("j"), curses.KEY_DOWN):
+                self._move(1 if count == 0 else count)
+            # Move up some
+            elif c in (ord("k"), curses.KEY_UP):
+                self._move(-1 if count == 0 else -count)
+            # Move down heaps
+            elif c == curses.KEY_NPAGE:
+                self._move(10 if count == 0 else 10*count)
+            # Move up heaps
+            elif c == curses.KEY_PPAGE:
+                self._move(-10 if count == 0 else -10*count)
+            # Move to top
+            elif c == curses.KEY_HOME or c == ord("g") and history[0] == ord("g"):
+                self._move(-math.inf)
+            # Move to bottom, or any line
+            elif c == ord("G"):
+                if count == 0:
+                    self._move(math.inf)
+                else:
+                    self._move(-math.inf)
+                    self._move(count)
+            # Move to bottom
+            elif c == curses.KEY_END:
+                self._move(math.inf)
+            # User breaks the main loop
+            elif c == ord("q"):
+                break
+            # Unhandled, just added to history
+            else:
+                pass
+
+            count = 0
+            history.appendleft(c)
+
+#    def _update_list(self):
 #        for y, problem_index in enumerate(range(selected_lo, selected_hi + 1)):
 #            problem = problems[problem_index]
 #            problem_name = problem["name"]
@@ -186,9 +240,6 @@ class CodeforcesClient:
 #                curses.A_REVERSE if problem_index == selected else curses.A_NORMAL,
 #            )
 #
-#    def make_header(self):
-#        self.screen.addstr(0, 0, "       #  |  Solved count  |  Problem name", curses.A_UNDERLINE)
-#
 #    def clear_list(self):
 #        for y in range(1, self.max_y):
 #            self.screen.addstr(y, 0, " "*(self.max_x - 3))  # TODO: Betterer
@@ -199,10 +250,18 @@ if __name__ == "__main__":
 
     CONFIG = configparser.ConfigParser()
     CONFIG.read(os.path.join(FILE_PATH, ".codeforces_client.cfg"))
+
     KEY = CONFIG["Codeforces"]["key"]
     SECRET = CONFIG["Codeforces"]["secret"]
+
     USERNAME = CONFIG["Codeforces"]["username"]
     PASSWORD = CONFIG["Codeforces"]["password"]
-    curses.wrapper(Tool())
+
+    curses.wrapper(
+        Tool(
+            username=USERNAME,
+            password=PASSWORD,
+        )
+    )
 else:
     raise ImportError("Don't import this for now")
