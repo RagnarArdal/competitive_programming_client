@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 
 
+#import asyncio  # TODO: Do things asynchronously and rigorously
 import collections
 import configparser
 import curses
+import hashlib
 import json
+import logging
 import math
 import os
+import pathlib
 import subprocess
+import sys
 import urllib.request
 
 import selenium.webdriver
@@ -23,18 +28,19 @@ class ResponseError(Exception):
 class CodeforcesClient:
     def __init__(
             self,
-            codeforces_url=CODEFORCES_URL,
-            codeforces_api_url=None,
+            *,
+            url=CODEFORCES_URL,
+            api_url=None,
         ):
-        if codeforces_url[-1] != "/":
-            self._codeforces_url = codeforces_url + "/"
+        if url[-1] != "/":
+            self._url = url + "/"
         else:
-            self._codeforces_url = codeforces_url
+            self._url = url
 
-        if codeforces_api_url is None:
-            self._codeforces_api_url = codeforces_url + "api/"
+        if api_url is None:
+            self._api_url = self._url + "api/"
         else:
-            self._codeforces_api_url = codeforces_api_url
+            self._api_url = api_url
 
         self._logged_in = False
 
@@ -51,15 +57,23 @@ class CodeforcesClient:
 
     def login(self, username, password):
         """Attempt to log in to the Codeforces website."""
-        self._client.get(self._codeforces_url + "enter")
+        LOGGER.info(
+            "Attempting login to %s with username %s and password (sha256) %s",
+            self._url,
+            username,
+            hashlib.sha256(password.encode("utf-8")).hexdigest(),
+        )
+        enter_url = self._url + "enter"
+        self._client.get(enter_url)
         enter_form = self._client.find_element_by_id("enterForm")
         enter_form.find_element_by_id("handle").send_keys(username)
         enter_form.find_element_by_id("password").send_keys(password)
         enter_form.find_element_by_class_name("submit").click()
-        self._logged_in = self._client.current_url == self._codeforces_url
+        self._logged_in = self._client.current_url == self._url
 
     def get_contests(self):
-        response = urllib.request.urlopen(self._codeforces_api_url + "problemset.problems")
+        LOGGER.info("Getting problems via %s", self._api_url)
+        response = urllib.request.urlopen(self._api_url + "problemset.problems")
         if response.status == 200:
             response_dict = json.load(response)
             if response_dict["status"] == "OK":
@@ -173,14 +187,23 @@ class Tool:
         #subprocess.call(["vim", "codeforces_client.py"])
 
         count = 0
-        history = collections.deque(maxlen=10)
+        history = collections.deque(maxlen=3)  # TODO: Maybe use this for something again
 
         while True:
+            LOGGER.info("Main loop iterating w/ history = %s", history)
+
             c = self.screen.getch()
+
+            LOGGER.info("Got character c where ord(c) = %s", c)
 
             # Handle numbers, they modify count
             if c in range(ord("0"), ord("9") + 1):
-                count = 10*count + int(c)
+                count = 10*count + (c - ord("0"))
+                LOGGER.info(
+                    "Character is the number %s and the count becomes %s",
+                    chr(c),
+                    count,
+                )
                 history.appendleft(c)
                 continue
 
@@ -203,20 +226,13 @@ class Tool:
             # Move to top
             elif c == curses.KEY_HOME or c == ord("g") and history[0] == ord("g"):
                 self._move(-math.inf)
-            # Move to bottom, or any line
-            elif c == ord("G"):
-                if count == 0:
-                    self._move(math.inf)
-                else:
-                    self._move(-math.inf)
-                    self._move(count)
             # Move to bottom
-            elif c == curses.KEY_END:
-                self._move(math.inf)
+            elif c == curses.KEY_END or c == ord("G"):
+                self._move(math.inf)  # TODO: Absolute moving?
             # User breaks the main loop
             elif c == ord("q"):
                 break
-            # Unhandled, just added to history
+            # Unhandled, just add to history at end of loop
             else:
                 pass
 
@@ -247,6 +263,16 @@ class Tool:
 
 if __name__ == "__main__":
     FILE_PATH = os.path.dirname(os.path.realpath(__file__))
+
+    # Init Logger for script
+    LOGGER = logging.getLogger("codeforces_client")
+    file_handler = logging.FileHandler(os.path.join(FILE_PATH, ".codeforces_client.log"))
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    LOGGER.addHandler(file_handler)
+    LOGGER.setLevel(logging.DEBUG)
+
+    LOGGER.info("Script run w/ sys.argv = %s", sys.argv)
 
     CONFIG = configparser.ConfigParser()
     CONFIG.read(os.path.join(FILE_PATH, ".codeforces_client.cfg"))
