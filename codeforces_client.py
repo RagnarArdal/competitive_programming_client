@@ -13,6 +13,8 @@ import os
 import pathlib
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.request
 
 import selenium.webdriver
@@ -262,20 +264,28 @@ class Tool:
 
 
 if __name__ == "__main__":
-    FILE_PATH = os.path.dirname(os.path.realpath(__file__))
+    USER_HOME = pathlib.Path.home()
 
     # Init Logger for script
     LOGGER = logging.getLogger("codeforces_client")
-    file_handler = logging.FileHandler(os.path.join(FILE_PATH, ".codeforces_client.log"))
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-    LOGGER.addHandler(file_handler)
-    LOGGER.setLevel(logging.DEBUG)
+    if "--LOG" in sys.argv:
+        # Log to temporary log file
+        LOG_FILE = tempfile.NamedTemporaryFile(
+            mode="w",
+            prefix="codeforces_client_" + str(int(time.time())%1000) + "_",
+            suffix="_.log",
+            delete=False,
+        )
+        HANDLER = logging.StreamHandler(LOG_FILE)
+        HANDLER.setLevel(logging.DEBUG)
+        HANDLER.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        LOGGER.addHandler(HANDLER)
+        LOGGER.setLevel(logging.DEBUG)
 
     LOGGER.info("Script run w/ sys.argv = %s", sys.argv)
 
     CONFIG = configparser.ConfigParser()
-    CONFIG.read(os.path.join(FILE_PATH, ".codeforces_client.cfg"))
+    CONFIG.read(USER_HOME/".codeforces_client.cfg")
 
     KEY = CONFIG["Codeforces"]["key"]
     SECRET = CONFIG["Codeforces"]["secret"]
@@ -283,11 +293,19 @@ if __name__ == "__main__":
     USERNAME = CONFIG["Codeforces"]["username"]
     PASSWORD = CONFIG["Codeforces"]["password"]
 
+    LOGGER.info("Got username from config: %s", USERNAME)
+    LOGGER.info(
+        "Got password from config: %s (sha256)",
+        hashlib.sha256(PASSWORD.encode("utf-8")).hexdigest(),
+    )
+
+    LOGGER.info("Starting call of wrapped Tool instance")
     curses.wrapper(
         Tool(
             username=USERNAME,
             password=PASSWORD,
         )
     )
+    LOGGER.info("Call to wrapped Tool instance has ended")
 else:
     raise ImportError("Don't import this for now")
