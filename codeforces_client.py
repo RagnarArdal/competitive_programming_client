@@ -9,7 +9,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import pathlib
 import subprocess
 import sys
@@ -20,7 +19,8 @@ import urllib.request
 import selenium.webdriver
 
 
-CODEFORCES_URL = "http://codeforces.com/"  # TODO: Put in configuration file?
+LOGGER_NAME = "codeforces_client"
+LOGGER = logging.getLogger(LOGGER_NAME)
 
 
 class ResponseError(Exception):
@@ -30,8 +30,8 @@ class ResponseError(Exception):
 class CodeforcesClient:
     def __init__(
             self,
+            url,
             *,
-            url=CODEFORCES_URL,
             api_url=None,
         ):
         if url[-1] != "/":
@@ -137,16 +137,19 @@ class Tool:
             *,
             username,
             password,
+            codeforces_url,
         ):
-        self.username = username
-        self.password = password
+        self._username = username
+        self._password = password
 
-        self.screen = None
-        self.max_y = None
-        self.max_x = None
-        self.selected = 0  # Selected problem or contest
+        self._screen = None
+        self._max_y = None
+        self._max_x = None
+        self._selected = math.inf  # Selected line relative to the top of the list
 
-        self._codeforces_client = CodeforcesClient()
+        self._codeforces_client = CodeforcesClient(
+            url=codeforces_url,
+        )
 
         self.contests = list(
             ContestItem(
@@ -161,11 +164,11 @@ class Tool:
             contest_item.sort(key=ProblemItem.key_index)
 
     def __call__(self, screen):
-        self.screen = screen
+        self._screen = screen
         self.main()
 
     def _handle_resize(self):
-        self.max_y, self.max_x = self.screen.getmaxyx()
+        self._max_y, self._max_x = self._screen.getmaxyx()
 
     def _move(self, n=0):
         if n == math.inf:
@@ -180,10 +183,10 @@ class Tool:
             raise RuntimeError
 
     def main(self):
-        if self.screen is None:
+        if self._screen is None:
             raise RuntimeError
 
-        self.screen.clear()
+        self._screen.clear()
         self._handle_resize()
 
         #subprocess.call(["vim", "codeforces_client.py"])
@@ -194,7 +197,7 @@ class Tool:
         while True:
             LOGGER.info("Main loop iterating w/ history = %s", history)
 
-            c = self.screen.getch()
+            c = self._screen.getch()
 
             LOGGER.info("Got character c where ord(c) = %s", c)
 
@@ -247,7 +250,7 @@ class Tool:
 #            problem_name = problem["name"]
 #            id_index = str(problem["contestId"]) + problem["index"]
 #            solved_count = problem["solvedCount"]
-#            self.screen.addstr(
+#            self._screen.addstr(
 #                y + 1,
 #                0,
 #                "  {:>6}  |  {:>12}  |  {}".format(
@@ -255,28 +258,24 @@ class Tool:
 #                    solved_count,
 #                    problem_name,
 #                ),
-#                curses.A_REVERSE if problem_index == selected else curses.A_NORMAL,
+#                curses.A_REVERSE if problem_index == _selected else curses.A_NORMAL,
 #            )
-#
-#    def clear_list(self):
-#        for y in range(1, self.max_y):
-#            self.screen.addstr(y, 0, " "*(self.max_x - 3))  # TODO: Betterer
 
 
-if __name__ == "__main__":
-    USER_HOME = pathlib.Path.home()
-
+def _main(logging_level=None):
     # Init Logger for script
+
     LOGGER = logging.getLogger("codeforces_client")
-    if "--LOG" in sys.argv:
+    if "--LOG" in argv:
         # Log to temporary log file
-        LOG_FILE = tempfile.NamedTemporaryFile(
-            mode="w",
-            prefix="codeforces_client_" + str(int(time.time())%1000) + "_",
-            suffix="_.log",
-            delete=False,
+        HANDLER = logging.StreamHandler(
+            tempfile.NamedTemporaryFile(
+                mode="w",
+                prefix="codeforces_client_" + str(int(time.time())%1000) + "_",
+                suffix=".log",
+                delete=False,
+            ),
         )
-        HANDLER = logging.StreamHandler(LOG_FILE)
         HANDLER.setLevel(logging.DEBUG)
         HANDLER.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
         LOGGER.addHandler(HANDLER)
@@ -284,14 +283,19 @@ if __name__ == "__main__":
 
     LOGGER.info("Script run w/ sys.argv = %s", sys.argv)
 
+    # Read config file
+
     CONFIG = configparser.ConfigParser()
-    CONFIG.read(USER_HOME/".codeforces_client.cfg")
+    CONFIG.read(pathlib.Path.home()/".codeforces_client.cfg")
+    CONFIG = CONFIG["Codeforces"]
 
-    KEY = CONFIG["Codeforces"]["key"]
-    SECRET = CONFIG["Codeforces"]["secret"]
+    CODEFORCES_URL = CONFIG["url"]
 
-    USERNAME = CONFIG["Codeforces"]["username"]
-    PASSWORD = CONFIG["Codeforces"]["password"]
+    KEY = CONFIG["key"]
+    SECRET = CONFIG["secret"]
+
+    USERNAME = CONFIG["username"]
+    PASSWORD = CONFIG["password"]
 
     LOGGER.info("Got username from config: %s", USERNAME)
     LOGGER.info(
@@ -299,13 +303,17 @@ if __name__ == "__main__":
         hashlib.sha256(PASSWORD.encode("utf-8")).hexdigest(),
     )
 
+    # Wrap and call the Tool object with curses
+
     LOGGER.info("Starting call of wrapped Tool instance")
     curses.wrapper(
         Tool(
             username=USERNAME,
             password=PASSWORD,
+            codeforces_url=CODEFORCES_URL,
         )
     )
     LOGGER.info("Call to wrapped Tool instance has ended")
-else:
-    raise ImportError("Don't import this for now")
+
+
+if __name__ == "__main__":
