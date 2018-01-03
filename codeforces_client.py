@@ -78,7 +78,7 @@ class CodeforcesClient:
 
     def login(self, username, password):
         """Attempt to log in to the Codeforces website."""
-        _LOGGER.info(
+        _LOGGER.debug(
             "Attempting login to %s with username %s and password (sha256) %s",
             self._url,
             username,
@@ -93,7 +93,7 @@ class CodeforcesClient:
         self._logged_in = self._client.current_url == self._url
 
     def get_contests(self):
-        _LOGGER.info("Getting problems via %s", self._api_url)
+        _LOGGER.debug("Getting problems via %s", self._api_url)
         response = urllib.request.urlopen(self._api_url + "problemset.problems")
         if response.status == 200:
             response_dict = json.load(response)
@@ -187,8 +187,9 @@ class Tool:
         self._max_y = None
         self._max_x = None
 
-        # The start of the contest list, the absolute item, and the relative position
+        # The start (and end) of the contest list, the absolute item, and the relative position
         self._start = (0, None)  # The indices of the starting contest and problem
+        self._last = None  # The indices of the last contest and problem (calculated on redraw call)
         self._selected = (0, None)  # The indices of the selected contest and problem
         self._relative = 0  # The relative (to the start) position of the selected contest or problem
 
@@ -210,7 +211,7 @@ class Tool:
             # Skip until y reached
             raise NotImplementedError
 
-        while y < self._max_y - 1:
+        while True:
             contest = self._contests[contest_index]
 
             if problem_index is None:
@@ -223,6 +224,10 @@ class Tool:
                 y += 1
                 problem_index = 0
 
+            if y == self._max_y - 1:
+                self._last = (contest_index, None)
+                break
+
             while y < self._max_y - 1 and problem_index < len(contest):
                 self._place_problem(
                     y,
@@ -232,6 +237,9 @@ class Tool:
                 )
                 y += 1
                 problem_index += 1
+
+            if y == self._max_y - 1:
+                self._last = (contest_index, problem_index - 1)
 
             contest_index += 1
             problem_index = None
@@ -322,20 +330,20 @@ class Tool:
         problem_index = None
 
         while True:
-            _LOGGER.info("Main loop iterating w/ history = %s", history)
+            _LOGGER.debug("Main loop iterating w/ history = %s", history)
 
             c = self._screen.getch()
 
-            _LOGGER.info("Got character c where ord(c) = %s", c)
+            _LOGGER.debug("Got character c where ord(c) = %s", c)
             try:
-                _LOGGER.info("Character c corresponds to ASCII character %s", repr(chr(c).encode('ascii').decode("ascii")))
+                _LOGGER.debug("Character c corresponds to ASCII character %s", repr(chr(c).encode('ascii').decode("ascii")))
             except UnicodeEncodeError:
                 pass
 
             # Handle numbers, they modify count
             if c in range(ord("0"), ord("9") + 1):
                 count = 10*count + (c - ord("0"))
-                _LOGGER.info(
+                _LOGGER.debug(
                     "Character is the number %s and the count becomes %s",
                     chr(c),
                     count,
@@ -431,8 +439,8 @@ def _main():
         _LOGGER.addHandler(handler)
         logging.getLogger().setLevel(args.logging_level)
 
-    _LOGGER.info("Script run w/ sys.argv = %s", sys.argv)
-    _LOGGER.info("Argparse yields %s, args")
+    _LOGGER.debug("Script run w/ sys.argv = %s", sys.argv)
+    _LOGGER.debug("Argparse yields %s, args")
 
     # Read config file
 
@@ -465,7 +473,7 @@ def _main():
 
     # Wrap and call the Tool object with curses
 
-    _LOGGER.info("Starting call of wrapped Tool instance")
+    _LOGGER.debug("Starting call of wrapped Tool instance")
     curses.wrapper(
         Tool(
             username=username,
@@ -475,7 +483,7 @@ def _main():
             codeforces_url=codeforces_url,
         )
     )
-    _LOGGER.info("Call to wrapped Tool instance has ended")
+    _LOGGER.debug("Call to wrapped Tool instance has ended")
 
 
 if __name__ == "__main__":
