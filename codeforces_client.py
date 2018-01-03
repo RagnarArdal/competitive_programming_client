@@ -170,6 +170,7 @@ class Tool:
             url=codeforces_url,
         )
 
+        # Get contests TODO: This is prime material for asyncio
         self._contests = list(
             ContestItem(
                 contest_id,
@@ -185,20 +186,105 @@ class Tool:
         self._screen = None
         self._max_y = None
         self._max_x = None
-        self._start = 0
-        self._selected = (0, None)
+
+        # The start of the contest list, the absolute item, and the relative position
+        self._start = (0, None)  # The indices of the starting contest and problem
+        self._selected = (0, None)  # The indices of the selected contest and problem
+        self._relative = 0  # The relative (to the start) position of the selected contest or problem
+
+        # Format string for the contest list
         self._contest_format_string = None
+        self._problem_format_string = None
 
     def __call__(self, screen):
         self._screen = screen
         self.main()
 
-    def main(self):
-        if self._screen is None:
-            raise RuntimeError
+    def _redraw(self, *, starting_at=0):
+        """Redraw list starting at the specified line."""
+        y = starting_at
+        if y == 0:
+            contest_index = self._start[0]
+            problem_index = self._start[1]
+        else:
+            # Skip until y reached
+            raise NotImplementedError
 
-        self._screen.clear()
+        while y < self._max_y - 1:
+            contest = self._contests[contest_index]
 
+            if problem_index is None:
+                self._place_contest(
+                    y,
+                    contest,
+                    last=contest_index + 1 == len(self._contests),
+                    selected=self._selected == (contest_index, None),
+                )
+                y += 1
+                problem_index = 0
+
+            while y < self._max_y - 1 and problem_index < len(contest):
+                self._place_problem(
+                    y,
+                    contest[problem_index],
+                    last=problem_index + 1 == len(contest),
+                    selected=self._selected == (contest_index, problem_index),
+                )
+                y += 1
+                problem_index += 1
+
+            contest_index += 1
+            problem_index = None
+
+        # TODO: Replacing selected at this point would be faster
+
+    def _place_contest(self, y, contest, *, last=False, selected=False):
+        color = curses.A_REVERSE if selected else curses.A_NORMAL
+        self._screen.addstr(
+            y,
+            0,
+            self._contest_format_string.format(contest.contest_id),
+            color,
+        )
+        self._screen.addch(
+            y,
+            1,
+            curses.ACS_LLCORNER if last else curses.ACS_LTEE,
+            color,
+        )
+        self._screen.addch(
+            y,
+            2,
+            curses.ACS_HLINE,
+            color,
+        )
+        self._screen.addch(
+            y,
+            3,
+            curses.ACS_TTEE if contest.expanded else curses.ACS_HLINE,
+            color,
+        )
+
+    def _place_problem(self, y, problem, *, last=False, selected=False):
+        _LOGGER.debug("Placing problem on line %s", y)
+        color = curses.A_REVERSE if selected else curses.A_NORMAL
+        self._screen.addstr(
+            y,
+            0,
+            self._problem_format_string.format(problem.name),
+            color,
+        )
+        self._screen.addch(y, 1, curses.ACS_VLINE, color)
+        self._screen.addch(
+            y,
+            3,
+            curses.ACS_LLCORNER if last else curses.ACS_LTEE,
+            color,
+        )
+        self._screen.addch(y, 4, curses.ACS_HLINE, color)
+        self._screen.addch(y, 5, curses.ACS_HLINE, color)
+
+    def _handle_resize(self):
         self._max_y, self._max_x = self._screen.getmaxyx()
 
         # TODO: What if screen is too small?
@@ -207,34 +293,31 @@ class Tool:
         self._problem_format_string = "       {}"
         self._problem_format_string += " "*(self._max_x - len(self._problem_format_string) - 1)
 
-        y = 0
-        contest_index = 0
-        while y < self._max_y - 1:
-            contest = self._contests[contest_index]
-            contest.expanded = True
-            self._place_contest(
-                y,
-                contest,
-                selected=contest_index == 0,
-            )
-            y += 1
-            problem_index = 0
-            while y < self._max_y - 1 and problem_index < len(contest):
-                self._place_problem(
-                    y,
-                    contest[problem_index],
-                    last=problem_index + 1 == len(contest),
-                )
-                y += 1
-                problem_index += 1
-            contest_index += 1
+#    def _move(self, n=0):
+#        if n == math.inf:
+#            pass  # Move to top
+#        elif n == -math.inf:
+#            pass  # Move to bottom
+#        elif n > 0:
+#            pass  # Move down
+#        elif n < 0:
+#            pass  # Move up
+#        else:
+#            raise RuntimeError
 
+    def main(self):
+        if self._screen is None:
+            raise RuntimeError
+
+        self._screen.clear()
+        self._handle_resize()
+        self._redraw()
 
         count = 0
         history = collections.deque(maxlen=3)  # TODO: Maybe use this for something again
 
         start_contest = (0, None)
-        selected = 0
+
         contest_index = 0
         problem_index = None
 
@@ -267,19 +350,7 @@ class Tool:
             # Move down some
             elif c in (ord("j"), curses.KEY_DOWN):
                 #self._move(1 if count == 0 else count)
-                self._screen.addstr(
-                    selected,
-                    0,
-                    contest_format_string.format(self._contests[selected].contest_id),
-                    curses.A_NORMAL,
-                )
-                selected += 1
-                self._screen.addstr(
-                    selected,
-                    0,
-                    contest_format_string.format(self._contests[selected].contest_id),
-                    curses.A_REVERSE,
-                )
+                pass
             # Move up some
             elif c in (ord("k"), curses.KEY_UP):
                 #self._move(-1 if count == 0 else -count)
@@ -316,57 +387,6 @@ class Tool:
 
             count = 0
             history.appendleft(c)
-
-    def _place_contest(self, y, contest, *, last=False, selected=False):
-        color = curses.A_REVERSE if selected else curses.A_NORMAL
-        self._screen.addstr(
-            y,
-            0,
-            self._contest_format_string.format(contest.contest_id),
-            color,
-        )
-        self._screen.addch(y, 1, curses.ACS_LTEE, color)
-        self._screen.addch(y, 2, curses.ACS_HLINE, color)
-        self._screen.addch(
-            y,
-            3,
-            curses.ACS_TTEE if contest.expanded else curses.ACS_HLINE,
-            color,
-        )
-
-    def _place_problem(self, y, problem, *, last=False, selected=False):
-        _LOGGER.debug("Placing problem on line %s", y)
-        color = curses.A_REVERSE if selected else curses.A_NORMAL
-        self._screen.addstr(
-            y,
-            0,
-            self._problem_format_string.format(problem.name),
-            color,
-        )
-        self._screen.addch(y, 1, curses.ACS_VLINE, color)
-        self._screen.addch(
-            y,
-            3,
-            curses.ACS_LLCORNER if last else curses.ACS_LTEE,
-            color,
-        )
-        self._screen.addch(y, 4, curses.ACS_HLINE, color)
-        self._screen.addch(y, 5, curses.ACS_HLINE, color)
-
-    def _handle_resize(self):
-        self._max_y, self._max_x = self._screen.getmaxyx()
-#
-#    def _move(self, n=0):
-#        if n == math.inf:
-#            pass  # Move to top
-#        elif n == -math.inf:
-#            pass  # Move to bottom
-#        elif n > 0:
-#            pass  # Move down
-#        elif n < 0:
-#            pass  # Move up
-#        else:
-#            raise RuntimeError
 
 
 def _main():
