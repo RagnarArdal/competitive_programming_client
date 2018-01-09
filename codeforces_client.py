@@ -11,7 +11,7 @@ import json
 import logging
 import math
 import pathlib
-import subprocess  # TODO: Use subprocess.call(["vim", "codeforces_client.py"])
+import subprocess
 import sys
 import tempfile
 import time
@@ -124,13 +124,21 @@ class CodeforcesClient:
             problem.index,
         )
         _LOGGER.debug("Getting %s", url)
-        self._client.get(url)
-        self._client.execute_script(
-            "return arguments[0].scrollIntoView();",
-            self._client.find_element_by_class_name("problem-statement"),
-        )
-        self._client.execute_script("window.scrollBy(-window.screenX, 0)")
+        if self._client.current_url != url:
+            self._client.get(url)
+            self._client.execute_script(
+                "return arguments[0].scrollIntoView();",
+                self._client.find_element_by_class_name("problem-statement"),
+            )
+            self._client.execute_script("window.scrollBy(-window.screenX, 0)")
 
+    def submit_solution(self, problem, solution_path):
+        if solution_path.exists():
+            self.load_problem(problem)
+            file_input = self._client.find_element_by_css_selector("input[name=sourceFile]")
+            file_input.send_keys(str(solution_path))  # TODO: str necessary?
+            submit_button = self._client.find_element_by_css_selector("input.submit")
+            self._client.execute_script("arguments[0].click();", submit_button)
 
 class ContestItem(list):
     def __init__(self, contest_id, iterable):
@@ -189,7 +197,7 @@ class Tool:
 
         # Store path, making sure it exists on file system as well
         self._path = path
-        path.mkdir(parents=True, exist_ok=True)
+        #path.mkdir(parents=True, exist_ok=True)
 
         # Get contests TODO: This is prime material for asyncio
         self._contests = list(
@@ -315,7 +323,7 @@ class Tool:
         self._screen.addstr(
             y,
             0,
-            self._problem_format_string.format(problem.name),
+            self._problem_format_string.format(str(problem.index) + ": " + problem.name),
             color,
         )
         if continues:
@@ -332,9 +340,9 @@ class Tool:
     def _handle_resize(self):
         self._max_y, self._max_x = self._screen.getmaxyx()
 
-        # TODO: What if screen is too small?
-        self._contest_format_string = "     {:<" + str(self._max_x - 7) + "}"
-        self._problem_format_string = "       {:<" + str(self._max_x - 9) + "}"
+        # TODO: What if screen is too small? Also, just do better...
+        self._contest_format_string = "     {:<" + str(self._max_x - 6) + "}"
+        self._problem_format_string = "       {:<" + str(self._max_x - 8) + "}"
 
         self._start = self._selected
         self._relative = 0
@@ -613,6 +621,24 @@ class Tool:
             # Move list up
             elif c == ord("\x19"):  # Ctrl+y
                 pass
+            # Edit solution
+            elif c == ord("e"):
+                contest_index, problem_index = self._selected
+                if problem_index is not None:
+                    problem = contest[problem_index]
+                    problem_path = self._path/str(problem.contest_id)/str(problem.index)
+                    problem_path.mkdir(parents=True, exist_ok=True)
+                    solution_path = problem_path/"solution.py"
+                    solution_path.touch(exist_ok=True)
+                    subprocess.call(["vim", str(solution_path)])
+                    self._handle_resize()  # To avoid residual effects
+            # Submit solution
+            elif c == ord("s"):
+                contest_index, problem_index = self._selected
+                if problem_index is not None:
+                    problem = contest[problem_index]
+                    solution_path = self._path/str(problem.contest_id)/str(problem.index)/"solution.py"
+                    self._codeforces_client.submit_solution(problem, solution_path)
             elif c == ord("q"):
                 break
             # Unhandled, just add to history at end of loop
