@@ -27,22 +27,107 @@ _LOGGER_NAME = "codeforces_client"
 _LOGGER = logging.getLogger(_LOGGER_NAME)
 
 
-_LOGGING_LEVELS = [
-    "CRITICAL",
-    "ERROR",
-    "WARNING",
-    "INFO",
-    "DEBUG",
-    "NOTSET",
-]
-
-
 class ResponseError(Exception):
     pass
 
 
 def _hexdigest(string):
     return hashlib.sha256(string.encode("utf-8")).hexdigest()
+
+
+class CursesUI:
+    """The class that manages the curses window."""
+    def __init__(self, screen, ui_item):
+        if not isinstance(ui_item, CursesUIItem):
+            raise TypeError
+        self._screen = screen
+        self._stack = [ui_item]
+        self.resize()
+
+    def resize(self):
+        pass
+
+    def _handle_up(self, n=1):
+        pass
+
+    def _handle_down(self, n=1):
+        pass
+
+    def _handle_up_level(self, n=1):
+        pass
+
+    def _handle_down_level(self, n=1):
+        pass
+
+    def append(self, ui_item):
+        """Append an item to the currently selected item."""
+        if not isinstance(ui_item, CursesUIItem):
+            raise TypeError
+        raise NotImplementedError
+
+    def extend(self, ui_items):
+        """Append multiple items to the currently selected item."""
+        ui_items = list(ui_items)
+        if not all(isinstance(ui_item, CursesUIItem) for ui_item in ui_items):
+            raise TypeError
+        raise NotImplementedError
+
+
+class CursesUIItem:
+    """The base class for items of the curses window."""
+    def __init__(
+            self,
+            iterable,
+            *,
+            obj=None,
+        ):
+        children = list(iterable)
+        if not all(isinstance(item) for items in children):
+            raise TypeError
+        self.children = children
+        self.obj = None
+        self._selected = None
+
+    def __str__(self):
+        return str(self.obj)
+
+
+class ContestItem(list):
+    def __init__(self, contest_id, iterable):
+        super().__init__(iterable)
+        self.expanded = False
+        self.contest_id = contest_id
+
+
+class ProblemItem:
+    def __init__(self, problem_dict):
+        self._problem_dict = problem_dict
+        self.contest_id = problem_dict["contestId"]
+        self.index = problem_dict["index"]
+        self.name = problem_dict["name"]
+        self.solved_count = problem_dict["solvedCount"]
+
+
+class CursesUILabel(CursesUIItem):
+    def __init__(self, label, iterable):
+        super().__init__(iterable)
+        self.obj = label
+
+    def __str__(self):
+        return self.label
+
+
+class CursesItemProblem(CursesItem):
+    def __init__(
+            self,
+            iterable=(),
+            problem_dict,
+        ):
+        super().__init__(iterable)
+        self.obj = problem_dict
+
+    def __str__(self):
+        return "{0[contestId]}/{0[index]}: {0[name]} (solved: {0[solvedCount]})".format(self.obj)
 
 
 class CodeforcesClient:
@@ -139,37 +224,6 @@ class CodeforcesClient:
             file_input.send_keys(str(solution_path))  # TODO: str necessary?
             submit_button = self._client.find_element_by_css_selector("input.submit")
             self._client.execute_script("arguments[0].click();", submit_button)
-
-class ContestItem(list):
-    def __init__(self, contest_id, iterable):
-        self.expanded = False
-        self.contest_id = contest_id
-        super().__init__(iterable)
-
-    @staticmethod
-    def key_contest_id(contest_item):
-        return contest_item.contest_id
-
-
-class ProblemItem:
-    def __init__(self, problem_dict):
-        self._problem_dict = problem_dict
-        self.contest_id = problem_dict["contestId"]
-        self.index = problem_dict["index"]
-        self.name = problem_dict["name"]
-        self.solved_count = problem_dict["solvedCount"]
-
-    @staticmethod
-    def key_index(problem_item):
-        return problem_item.index
-
-    @staticmethod
-    def key_name(problem_item):
-        return problem_item.name
-
-    @staticmethod
-    def key_solved_count(problem_item):
-        return problem_item.solved_count
 
 
 class Tool:
@@ -667,7 +721,7 @@ def _main():
         "-l",
         "--log",
         default=None,
-        choices=_LOGGING_LEVELS,
+        choices=logging._levelToName.values(),  # TODO: Can this be found elsewhere?
         dest="logging_level",
         help="set logging level and log to temp file",
     )
