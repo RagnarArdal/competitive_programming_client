@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 
+import abc
 import argparse
 #import asyncio  # TODO: Do things asynchronously and rigorously
 import collections
@@ -35,6 +36,106 @@ def _hexdigest(string):
     return hashlib.sha256(string.encode("utf-8")).hexdigest()
 
 
+EDIT = ":edit"
+TEST = ":test"
+COMPILE = ":compile"
+
+
+#
+# Programming language classes
+#
+
+
+class ProgrammingLanguage(metaclass=abc.ABCMeta):
+    """A base class for classes containing everything pertaining a programming language."""
+    @property
+    @abc.abstractmethod
+    def name(self):
+        """The simple version of the name of the programming language."""
+        pass
+
+    @property
+    @abc.abstractmethod
+    def extension(self):
+        """The file extension of a file written in the programming language."""
+        pass
+
+    @abc.abstractmethod
+    def compile(self, file_path):
+        """Compile file and return the compiled file's path."""
+        pass
+
+    @abc.abstractmethod
+    def run(
+            self,
+            program_file_path,
+            input_stream,
+            output_stream,
+        ):
+        """Run a compiled program with input and output streams."""
+        pass
+
+
+class Python(ProgrammingLanguage):
+    """The Python programming language."""
+    name = "python"
+    extension = ".py"
+
+    def compile(self, file_path):
+        return file_path
+
+    def run(
+            self,
+            program_file_path,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+        ):
+        return subprocess.call(
+            ["python", program_file_path],
+            stdin=input_stream,
+            stdout=output_stream,
+        )
+
+
+class CPP(ProgrammingLanguage):
+    """The c++ programming language."""
+    name = "c++"
+    extension = ".cpp"
+
+    def compile(self, file_path):
+        raise NotImplementedError
+
+    def run(
+            self,
+            program_file_path,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+        ):
+        raise NotImplementedError
+
+
+class Java(ProgrammingLanguage):
+    """The Java programming language."""
+    name = "java"
+    extension = ".java"
+
+    def compile(self, file_path):
+        raise NotImplementedError
+
+    def run(
+            self,
+            program_file_path,
+            input_stream=sys.stdin,
+            output_stream=sys.stdout,
+        ):
+        raise NotImplementedError
+
+
+#
+# UI class
+#
+
+
 class CursesUI:
     """The class that manages the curses window."""
 
@@ -49,6 +150,7 @@ class CursesUI:
     )
 
     def __init__(self, screen):
+        curses.curs_set(False)  # Hide cursor
         self._screen = screen
         self._screen.clear()
 
@@ -57,10 +159,13 @@ class CursesUI:
 
         self._selection = None  # The non-empty list of strings to select from
 
-        self._status_bar = ""  # The current string displayed in the status bar
+        self._status_bar = None  # The current string displayed in the status bar
+
+        self.set_status_bar("")
 
     @property
     def status(self):
+        """Return the status tuple of the UI."""
         current_status = self.Status(
             index=self._index,
             viewport_start=self._viewport_start,
@@ -70,9 +175,10 @@ class CursesUI:
     def refresh(self):
         """Redraw the entire thing."""
         self._refresh_viewport()
-        self._set_status_bar(self._status_bar)
+        self.set_status_bar(self._status_bar)
 
     def set_selection(self, selection, *, status=None):
+        """Set the list of strings to display."""
         self._selection = selection
         if status is None:
             self._index = 0
@@ -81,19 +187,22 @@ class CursesUI:
             if isinstance(status, self.Status):
                 self._index = status.index
                 self._viewport_start = status.viewport_start
-                self._refresh_viewport()
             else:
                 raise TypeError
+        self._refresh_viewport()
 
     def set_status_bar(self, message):
-        if isinstance(message, str):
+        """Set the left aligned message of the status bar on the bottom."""
+        max_y = self._screen.getmaxyx()[0]
+        if isinstance(message, str) and max_y > 0:
             self._status_bar = message
             line = self._prepare_string(message)
-            self._screen.addstr(y, 0, line, curses.A_DIM)
+            self._screen.addstr(max_y - 1, 0, line, curses.A_BOLD)  # pylint: disable=undefined-variable
         else:
             raise TypeError
 
-    def move_selection(self, n=1):
+    def move_selection(self, n=1):  # pylint: disable=invalid-name
+        """Change the selected item of the selection by moving up or down."""
         # Calculate new index without going above or below the selection
         new_index = self._index + n
         if new_index < 0:
@@ -104,24 +213,33 @@ class CursesUI:
         # TODO: Either do a total or selective update of the selection
         #       Also move viewport, like, smartly-like
 
+        max_y = self._screen.getmaxyx()[0]
+        if new_index < self._viewport_start:
+            # Moved up beyond viewport
+            self._viewport_start = new_index
+        elif new_index >= self._viewport_start + max_y - 1:
+            # Moved down beyond viewport
+            # viewport_start + max_y is the status bar
+            self._viewport_start = new_index - max_y + 2
+
+        self._index = new_index
         self._refresh_viewport()
 
-    def move_viewport(self, n=1):
+    def move_viewport(self, n=1):  # pylint: disable=invalid-name
+        """Change which part of the selection is visible by moving up or down."""
         self._viewport_start += n
         self._refresh_viewport()
 
     def _prepare_string(self, string, padding=" "):
         """Truncate and pad a string so it is exactly the screens width."""
         _, max_x = self._screen.getmaxyx()
-        return "{{{1}:<{0}.{0}}}".format(max_x - 1, padding).format(string)
+        return "{{!s:{1}<{0}.{0}}}".format(max_x - 1, padding).format(string)
 
     def _refresh_viewport(self):
-        if self._index is None or self._viewport_start is None:
-            return
-
+        """Print the selection anew."""
         index = self._viewport_start
         max_y, max_x = self._screen.getmaxyx()
-        for y in range(max_y - 1):
+        for y in range(max_y - 1):  # pylint: disable=invalid-name
             if 0 <= index < len(self._selection):
                 line = self._prepare_string(self._selection[index])
             else:
@@ -131,21 +249,108 @@ class CursesUI:
             index += 1
 
 
-problem_format_string = "{0[contestId]}/{0[index]}: {0[name]} (solved: {0[solvedCount]})"
+#
+# The client classes
+#
 
 
-class CodeforcesClient:
+class ProblemContainer(list):
+    """The class for containing problems."""
     def __init__(
             self,
-            url,
+            iterable=(),
             *,
-            api_url=None,
+            name="",
         ):
+        super().__init__(iterable)
+        self.name = name
+        self.status = None  # A Curses UI status
+
+    def __str__(self):
+        return "{} ({})".format(self.name, len(self))
+
+
+class Problem:
+    """The wrapper class for problem dictionaries."""
+    # TODO: There must be a better way to do this
+    def __init__(
+            self,
+            obj,
+            fmt,
+        ):
+        self.obj = obj
+        self.fmt = fmt
+
+    def __str__(self):
+        return self.fmt.format(self.obj)
+
+    @property
+    def path(self):
+        """Return the preferred relative path of the problem."""
+        return pathlib.Path(str(self.obj["contestId"]))/self.obj["index"]
+
+
+class CPClient(metaclass=abc.ABCMeta):
+    @property
+    def logged_in(self):
+        """Whether or not the client is logged in."""
+        return self._logged_in
+
+    @abc.abstractmethod
+    def get_catalogue(self):
+        """Return the catalogue of problems."""
+        pass
+
+    @abc.abstractmethod
+    def log_in(self):
+        """Log in to server."""
+        pass
+
+    @abc.abstractmethod
+    def get_tests(self, problem):
+        """Return some form of problem tests"""  # TODO: Determine what to do here
+        pass
+
+    @abc.abstractmethod
+    def load_problem(self, problem):
+        """Load problem, whatever that entails.
+
+        Applicable e.g. for Codeforces, where we display problem in browser.
+        """
+        pass
+
+    @abc.abstractmethod
+    def submit_solution(self, problem, solution_path):
+        """Submit a solution to the server."""
+        pass
+
+
+class CodeforcesClient(CPClient):
+    NAME = "Codeforces"
+    PROBLEM_FORMAT_STRING = "{0[contestId]}/{0[index]}: {0[name]} (solved={0[solvedCount]})"
+
+    def __init__(self, config):
+        config = config["codeforces"]
+
+        self._username = config["username"]
+        self._password = config["password"]
+
+        _LOGGER.info("Got username from config: %s", self._username)
+        _LOGGER.info("Got password from config w/ sha256: %s", _hexdigest(self._password))
+
+        self._key = config["key"]
+        self._secret = config["secret"]
+
+        _LOGGER.info("Got key from config w/ sha256: %s", _hexdigest(self._key))
+        _LOGGER.info("Got secret from config w/ sha256: %s", _hexdigest(self._secret))
+
+        url = config["url"]
         if url[-1] != "/":
             self._url = url + "/"
         else:
             self._url = url
 
+        api_url = None  # TODO
         if api_url is None:
             self._api_url = self._url + "api/"
         else:
@@ -153,25 +358,27 @@ class CodeforcesClient:
 
         self._logged_in = False
 
-        chrome_options = selenium.webdriver.ChromeOptions()
-        chrome_options.add_argument("-incognito")
-        self._client = selenium.webdriver.Chrome(options=chrome_options)
+        _LOGGER.debug("%s api_url = %s", self, self._api_url)
+        _LOGGER.debug("%s firing up chrome", self)
+
+        self._client = None
 
     def __del__(self):
-        self._client.close()
+        if self._client is not None:
+            # Close chrome
+            _LOGGER.debug("%s closing chrome", self)
+            self._client.close()
 
-    @property
-    def logged_in(self):
-        return self._logged_in
+    def _start_client(self):
+        if self._client is None:
+            chrome_options = selenium.webdriver.ChromeOptions()
+            chrome_options.add_argument("-incognito")
+            self._client = selenium.webdriver.Chrome(options=chrome_options)
 
-    def login(self, username, password):
+    def log_in(self):
         """Attempt to log in to the Codeforces website."""
-        _LOGGER.debug(
-            "Attempting login to %s with username %s and password (sha256) %s",
-            self._url,
-            username,
-            hashlib.sha256(password.encode("utf-8")).hexdigest(),
-        )
+        username = self._username
+        password = self._password
         enter_url = self._url + "enter"
         self._client.get(enter_url)
         enter_form = self._client.find_element_by_id("enterForm")
@@ -180,7 +387,7 @@ class CodeforcesClient:
         enter_form.find_element_by_class_name("submit").click()
         self._logged_in = self._client.current_url == self._url
 
-    def get_contests(self):
+    def get_catalogue(self):
         _LOGGER.debug("Getting problems via %s", self._api_url)
         response = urllib.request.urlopen(self._api_url + "problemset.problems")
         if response.status == 200:
@@ -203,7 +410,22 @@ class CodeforcesClient:
                     index = statistic["index"]
                     contests[contest_id][index]["solvedCount"] = statistic["solvedCount"]
 
-                return contests
+                catalogue = ProblemContainer(
+                    (
+                        ProblemContainer(
+                            (Problem(problem, self.PROBLEM_FORMAT_STRING) for problem in problems.values()),
+                            name=contest_id,
+                        )
+                        for contest_id, problems in contests.items()
+                    ),
+                    name=self.NAME,
+                )
+
+                catalogue.sort(key=lambda contest: contest.name)
+                #for contest in catalogue:
+                #    contest.sort(key=lambda problem: problem.obj["index"])
+
+                return catalogue
         raise ResponseError
 
     def load_problem(self, problem):
@@ -229,44 +451,140 @@ class CodeforcesClient:
             submit_button = self._client.find_element_by_css_selector("input.submit")
             self._client.execute_script("arguments[0].click();", submit_button)
 
+    def get_tests(self, problem):
+        raise NotImplementedError
+
+#    def _codeforces(self):
+#        self._username = username
+#        self._password = password
+#
+#        self._key = key
+#        self._secret = secret
+#
+#        self._codeforces_client = CodeforcesClient(
+#            url=codeforces_url,
+#        )
+#
+#        self._codeforces_client.login(username, password)
+#
+#        # Store path, making sure it exists on file system as well
+#        self._path = path
+#        #path.mkdir(parents=True, exist_ok=True)
+#
+#        # Get contests TODO: This is prime material for asyncio
+#        self._contests = list(
+#            ContestItem(
+#                contest_id,
+#                (ProblemItem(problem) for problem in problems.values())
+#            )
+#            for contest_id, problems
+#            in self._codeforces_client.get_contests().items()
+#        )
+#        self._contests.sort(key=ContestItem.key_contest_id)
+#        for contest_item in self._contests:
+#            contest_item.sort(key=ProblemItem.key_index)
+#
+#        # Format string for the contest list
+#        self._contest_format_string = None
+#        self._problem_format_string = None
+#
+#
+#
+#
+#
+#        path = pathlib.Path(config["Local"]["path"]).expanduser()
+#
+#        _LOGGER.info("Got contest directory %s from config", path)
+
+
+#
+# The command line tool class
+#
+
 
 class Tool:
+
     def __init__(self, config):
         self._config = config
 
         # Store path
         self._path = pathlib.Path(config["cpc"]["path"]).expanduser()
 
-        # Format string for the contest list
-        self._contest_format_string = None
-        self._problem_format_string = None
+        self._client = None
+
+        self._screen = None
+        self._ui = None
+
+        self._stack = []
+        self._current_selection = ProblemContainer(
+            (
+                ProblemContainer(name=CodeforcesClient.NAME),
+                ProblemContainer(name="Kattis (Incoming)"),
+                ProblemContainer(name="Project Euler (Incoming)"),
+                ProblemContainer(name="ICPC (Incoming)"),
+            ),
+        )
 
     def __call__(self, screen):
         self._screen = screen
         self._ui = CursesUI(screen)
+        self._ui.set_selection(self._current_selection)
         self.main()
 
     def main(self):
-        if self._screen is None:
-            raise RuntimeError
 
         count = 0
         history = collections.deque(maxlen=3)
         command = ""
+        status_bar = ""
 
         while True:
             _LOGGER.debug("Main loop iterating w/ history = %s", history)
 
-            c = self._screen.getch()
+            c = self._screen.getch()  # pylint: disable=invalid-name
+            status_bar = chr(c)  # Default status bar string
+            add_to_history = True
 
-            _LOGGER.debug("Got character c where ord(c) = %s", c)
-            try:
-                _LOGGER.debug(
-                    "Character c corresponds to ASCII character %s",
-                    repr(chr(c).encode('ascii').decode("ascii")),
-                )
-            except UnicodeEncodeError:
-                pass
+            _LOGGER.debug(
+                "Got character c = %s; i.e., chr(c) = %s",
+                c,
+                repr(status_bar),  # status_bar starts off as chr(c)
+            )
+
+            if command:
+                if c == ord("\n"):
+                    if command in (":q", ":wq", ":q!", ":wq!"):
+                        break
+
+                    command = command.split()
+
+                    if ":edit".startswith(command[0]):
+                        status = self._ui.status
+                        selected = self._current_selection[status.index]
+                        if len(command) == 1:
+                            if isinstance(selected, Problem):
+                                self._edit(selected)
+                        elif len(command) == 2:
+                            # TODO: Different languages
+                            pass
+                        status_bar = ""
+                    elif ":submit".startswith(command[0]):
+                        status = self._ui.status
+                        selected = self._current_selection[status.index]
+                    elif ":test".startswith(command[0]):
+                        pass
+                    else:
+                        status_bar = "Not a command"
+                    command = ""
+                elif c == curses.KEY_BACKSPACE:
+                    command = command[:len(command) - 1]
+                    status_bar = command
+                else:
+                    command += chr(c)
+                    status_bar = command
+
+                self._ui.set_status_bar(status_bar)
+                continue
 
             # Handle numbers, they modify count
             if c in range(ord("0"), ord("9") + 1):
@@ -277,158 +595,111 @@ class Tool:
 
             # The resizing is a bit of a special case
             if c == curses.KEY_RESIZE:
-                self._handle_resize()
+                self._ui.refresh()
                 continue  # Don't care to add to history or destroy count
             # Move down some
             elif c in (ord("j"), curses.KEY_DOWN):
-                self._handle_move(1 if count == 0 else count)
+                self._ui.move_selection(1 if count == 0 else count)
             # Move up some
             elif c in (ord("k"), curses.KEY_UP):
-                self._handle_move(-1 if count == 0 else -count)
-            # Expand if possible
-            elif c in (ord("l"), curses.KEY_RIGHT):
-                contest_index, problem_index = self._selected
-                contest = self._contests[contest_index]
-                if problem_index is None:
-                    contest.expanded = True
-                    self._redraw()
-                else:
-                    problem = contest[problem_index]
-                    self._codeforces_client.load_problem(problem)
-            # Contract if possible
-            elif c in (ord("h"), curses.KEY_LEFT):
-                contest_index, problem_index = self._selected
-                contest = self._contests[contest_index]
-                if problem_index is not None:
-                    # Move up to contest
-                    self._handle_move(-problem_index - 1)
-                    contest.expanded = False
-                    self._redraw()
-                elif contest.expanded:
-                    contest.expanded = False
-                    self._redraw()
+                self._ui.move_selection(-1 if count == 0 else -count)
             # Move down heaps
             elif c == curses.KEY_NPAGE:
-                self._handle_move(10 if count == 0 else 10*count)
+                self._ui.move_selection(10 if count == 0 else 10*count)
             # Move up heaps
             elif c == curses.KEY_PPAGE:
-                self._handle_move(-10 if count == 0 else -10*count)
+                self._ui.move_selection(-10 if count == 0 else -10*count)
             # Move to top
-            elif c == curses.KEY_HOME or c == ord("g") and history and history[0] == ord("g"):
-                self._handle_move(-math.inf)
+            elif c == curses.KEY_HOME:
+                self._ui.move_selection(-math.inf)
+            # Move to top
+            elif c == ord("g") and history and history[0] == ord("g"):
+                self._ui.move_selection(-math.inf)
+                history.clear()
+                add_to_history = False
+                status_bar = "gg"
             # Move to bottom
             elif c == curses.KEY_END or c == ord("G"):
-                self._handle_move(math.inf)
-            # Select problem to look at
-            elif c == ord("\n"):
-                contest_index, problem_index = self._selected
-                contest = self._contests[contest_index]
-                if problem_index is not None:
-                    problem = contest[problem_index]
-                    self._codeforces_client.load_problem(problem)
-                else:
-                    contest.expanded = not contest.expanded
-                    self._redraw()
-            # User breaks the main loop
+                self._ui.move_selection(math.inf)
             # Move list down
             elif c == ord("\x05"):  # Ctrl+e
-                pass
+                self._ui.move_viewport(1 if count == 0 else count)
             # Move list up
             elif c == ord("\x19"):  # Ctrl+y
-                pass
-            # Edit solution
-            elif c == ord("e"):
-                contest_index, problem_index = self._selected
-                if problem_index is not None:
-                    problem = contest[problem_index]
-                    problem_path = self._path/str(problem.contest_id)/str(problem.index)
-                    problem_path.mkdir(parents=True, exist_ok=True)
-                    solution_path = problem_path/"solution.py"
-                    solution_path.touch(exist_ok=True)
-                    subprocess.call(["vim", str(solution_path)])
-                    self._handle_resize()  # To avoid residual effects
-            # Submit solution
-            elif c == ord("s"):
-                contest_index, problem_index = self._selected
-                if problem_index is not None:
-                    problem = contest[problem_index]
-                    solution_path = self._path/str(problem.contest_id)/str(problem.index)/"solution.py"
-                    self._codeforces_client.submit_solution(problem, solution_path)
-            elif c == ord("q"):
-                break
-            # Unhandled, just add to history at end of loop
+                self._ui.move_viewport(-1 if count == 0 else -count)
+            # User starts a command
+            elif c == ord(":"):
+                command = status_bar  # ":"
+                history.clear()  # History prior to the command has no effect
+                add_to_history = False
+            # Go down level or edit
+            elif c in (ord("l"), curses.KEY_RIGHT, ord("\n")):
+                self._go_down_level()
+            # Go up level
+            elif c in (ord("h"), curses.KEY_LEFT, curses.KEY_BACKSPACE):
+                self._go_up_level()
+            # No special handling
             else:
                 pass
 
             count = 0
-            history.appendleft(c)
+            try:
+                self._ui.set_status_bar(status_bar)
+            except curses.error:
+                self._ui.set_status_bar("")
+            if add_to_history:
+                history.appendleft(c)
 
+    def _go_up_level(self):
+        if self._stack:
+            self._current_selection.status = self._ui.status
+            selection = self._stack.pop()
+            self._current_selection = selection
+            self._ui.set_selection(selection, status=selection.status)
+            if not self._stack:
+                self._client = None
 
-    def _codeforces(self):
-        self._username = username
-        self._password = password
+    def _go_down_level(self):
+        status = self._ui.status
+        selected = self._current_selection[status.index]
 
-        self._key = key
-        self._secret = secret
+        _LOGGER.debug("selected = %s", selected)
 
-        self._codeforces_client = CodeforcesClient(
-            url=codeforces_url,
-        )
+        if isinstance(selected, ProblemContainer):
+            _LOGGER.debug("Move into container")
+            if not self._stack:
+                # TODO: Too hardcoded, but not too far from being good
+                if selected.name == CodeforcesClient.NAME:
+                    self._client = CodeforcesClient(self._config)
+                    _LOGGER.debug("Codeforces client = %s", self._client)
+                    if not selected:
+                        selected = self._client.get_catalogue()
+                    self._current_selection[status.index] = selected
+                else:
+                    return  # TODO: Implement other clients
+            self._current_selection.status = status
+            self._stack.append(self._current_selection)
+            self._current_selection = selected
+            self._ui.set_selection(selected, status=selected.status)
+        elif isinstance(selected, Problem):
+            _LOGGER.debug("Delegate to edit method")
+            self._client.load_problem(selected)
+            self._edit(selected)
+        else:
+            _LOGGER.warning("Unexpected, do nothing")
+            pass
 
-        self._codeforces_client.login(username, password)
+    def _edit(self, problem):
+        problem_path = self._path/self._client.NAME/problem.path
+        problem_path.mkdir(parents=True, exist_ok=True)
+        solution_path = problem_path/"solution.py"
+        solution_path.touch(exist_ok=True)
+        subprocess.call(["vim", str(solution_path)])
+        self._ui.refresh()  # To avoid residual effects
 
-        # Store path, making sure it exists on file system as well
-        self._path = path
-        #path.mkdir(parents=True, exist_ok=True)
-
-        # Get contests TODO: This is prime material for asyncio
-        self._contests = list(
-            ContestItem(
-                contest_id,
-                (ProblemItem(problem) for problem in problems.values())
-            )
-            for contest_id, problems
-            in self._codeforces_client.get_contests().items()
-        )
-        self._contests.sort(key=ContestItem.key_contest_id)
-        for contest_item in self._contests:
-            contest_item.sort(key=ProblemItem.key_index)
-
-        # Format string for the contest list
-        self._contest_format_string = None
-        self._problem_format_string = None
-
-
-
-
-        codeforces_config = config["codeforces"]
-
-        codeforces_url = codeforces_config["url"]
-
-        key = codeforces_config["key"]
-        secret = codeforces_config["secret"]
-
-        _LOGGER.info(
-            "Got key from config w/ sha256: %s",
-            _hexdigest(key),
-        )
-        _LOGGER.info(
-            "Got secret from config w/ sha256: %s",
-            _hexdigest(secret),
-        )
-
-        username = codeforces_config["username"]
-        password = codeforces_config["password"]
-
-        _LOGGER.info("Got username from config: %s", username)
-        _LOGGER.info(
-            "Got password from config w/ sha256: %s",
-            _hexdigest(password),
-        )
-
-        path = pathlib.Path(config["Local"]["path"]).expanduser()
-
-        _LOGGER.info("Got contest directory %s from config", path)
+    def _submit(self, problem):
+        solution_path = self._path/self._client.NAME/problem.path/"solution.py"
+        self._client.submit_solution(problem, solution_path)
 
 
 def _main():
@@ -449,14 +720,14 @@ def _main():
         "-l",
         "--log",
         default=None,
-        choices=logging._levelToName.values(),  # TODO: Can this be found elsewhere?
+        choices=logging._levelToName.values(),  # pylint: disable=protected-access
         dest="logging_level",
         help="set logging level and log to temp file",
     )
     args = arg_parser.parse_args()
 
     if args.version:
-        print("Codeforces Client", __version__)
+        print("Competitive Programming Client", __version__)
         sys.exit(0)
 
     if args.logging_level is not None:
@@ -464,7 +735,7 @@ def _main():
         handler = logging.StreamHandler(
             tempfile.NamedTemporaryFile(
                 mode="w",
-                prefix="cpc{:03d}_".format(int(time.time())%1000),
+                prefix="cpc_{:03d}_".format(int(time.time())%1000),
                 suffix=".log",
                 delete=False,
             ),

@@ -10,21 +10,22 @@ Coming soon: Documentation and pictures!
 
 Some outstanding items:
 
-* Add more competitive programming websites
-	* Project Euler
-	* Kattis
+* Add competitive programming servers
 	* Codeforces
 		* Competition support
 		* Shortcut to friend list standings during competitions
-* Use `asyncio` for working asynchronously with the websites
+	* ICPC
+	* Kattis
+	* Project Euler
+* Use `asyncio` for working asynchronously with the servers
 * Support more languages
 	* Java
 	* C++
+* Support for editors that aren't vim
 * Have a default template for each language
-* Fix end of list behaving strangely
-* Have a more generic way of controlling the curses list
-* Fetch and run tests locally (t, perhaps)
-* Shortcut for creating tests (T, perhaps)
+* Fetch and run tests locally (":test", perhaps)
+* Shortcut for creating tests (":test create", perhaps)
+* Different sorting
 
 ## Personal learning outcomes
 
