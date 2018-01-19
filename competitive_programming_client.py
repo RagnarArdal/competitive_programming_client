@@ -61,9 +61,9 @@ class ProgrammingLanguage(metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def compile(self, file_path):
+    def compile(self, source_file_path):
         """Compile file and return the compiled file's path."""
-        pass
+        _LOGGER.debug("Compiling %s", source_file_path)
 
     @abc.abstractmethod
     def run(
@@ -81,8 +81,8 @@ class Python(ProgrammingLanguage):
     name = "python"
     extension = ".py"
 
-    def compile(self, file_path):
-        return file_path
+    def compile(self, source_file_path):
+        return source_file_path
 
     def run(
             self,
@@ -102,8 +102,13 @@ class CPP(ProgrammingLanguage):
     name = "c++"
     extension = ".cpp"
 
-    def compile(self, file_path):
-        raise NotImplementedError
+    def compile(self, source_file_path):
+        super().compile(source_file_path)
+        out_file_path = source_file_path.with_suffix(".out")
+        _LOGGER.debug("The output file is %s", out_file_path)
+        return_code = subprocess.call(["g++", source_file_path, "-o", out_file_path])
+        _LOGGER.debug("Return code of compilation is %s", return_code)
+        return out_file_path
 
     def run(
             self,
@@ -111,7 +116,11 @@ class CPP(ProgrammingLanguage):
             input_stream=sys.stdin,
             output_stream=sys.stdout,
         ):
-        raise NotImplementedError
+        return subprocess.call(
+            [program_file_path],
+            stdin=input_stream,
+            stdout=output_stream,
+        )
 
 
 class Java(ProgrammingLanguage):
@@ -119,8 +128,15 @@ class Java(ProgrammingLanguage):
     name = "java"
     extension = ".java"
 
-    def compile(self, file_path):
-        raise NotImplementedError
+    def compile(self, source_file_path):
+        super().compile(source_file_path)
+        directory = source_file_path.parent
+        _LOGGER.debug("Directory is %s", directory)
+        out_file_path = source_file_path.with_suffix(".class")
+        _LOGGER.debug("The output file is %s", out_file_path)
+        return_code = subprocess.call(["javac", source_file_path, "-d", directory])
+        _LOGGER.debug("Return code of compilation is %s", return_code)
+        return out_file_path
 
     def run(
             self,
@@ -128,7 +144,11 @@ class Java(ProgrammingLanguage):
             input_stream=sys.stdin,
             output_stream=sys.stdout,
         ):
-        raise NotImplementedError
+        return subprocess.call(
+            ["java", program_file_path],
+            stdin=input_stream,
+            stdout=output_stream,
+        )
 
 
 #
