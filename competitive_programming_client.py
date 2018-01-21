@@ -39,6 +39,7 @@ def _hexdigest(string):
 EDIT = ":edit"
 TEST = ":test"
 COMPILE = ":compile"
+SUBMIT = ":submit"
 
 
 #
@@ -132,10 +133,10 @@ class Java(ProgrammingLanguage):
         super().compile(source_file_path)
         directory = source_file_path.parent
         _LOGGER.debug("Directory is %s", directory)
-        out_file_path = source_file_path.with_suffix(".class")
-        _LOGGER.debug("The output file is %s", out_file_path)
         return_code = subprocess.call(["javac", source_file_path, "-d", directory])
         _LOGGER.debug("Return code of compilation is %s", return_code)
+        out_file_path = source_file_path.with_suffix(".class")
+        _LOGGER.debug("The output file should be %s", out_file_path)
         return out_file_path
 
     def run(
@@ -194,8 +195,29 @@ class CursesUI:
 
     def refresh(self):
         """Redraw the entire thing."""
+        self._screen.clear()
         self._refresh_viewport()
         self.set_status_bar(self._status_bar)
+        self._screen.refresh()
+
+    def set_loading(self):
+        clear_line = self._prepare_string("")
+        max_y = self._screen.getmaxyx()[0]
+        for y in range(max_y - 1):
+            if y == 0:
+                self._screen.addstr(
+                    y,
+                    0,
+                    self._prepare_string("Loading..."),
+                    curses.A_BLINK,  # pylint: disable=undefined-variable
+                )
+            else:
+                self._screen.addstr(
+                    y,
+                    0,
+                    clear_line,
+                )
+        self._screen.refresh()
 
     def set_selection(self, selection, *, status=None):
         """Set the list of strings to display."""
@@ -287,7 +309,7 @@ class ProblemContainer(list):
         self.status = None  # A Curses UI status
 
     def __str__(self):
-        return "{} ({})".format(self.name, len(self))
+        return "{}".format(self.name)
 
 
 class Problem:
@@ -312,24 +334,20 @@ class Problem:
 
 class CPClient(metaclass=abc.ABCMeta):
     @property
-    def logged_in(self):
-        """Whether or not the client is logged in."""
-        return self._logged_in
+    @abc.abstractmethod
+    def name(self):
+        """The simple name of the server this client speaks to."""
+        pass
 
     @abc.abstractmethod
     def get_catalogue(self):
         """Return the catalogue of problems."""
-        pass
-
-    @abc.abstractmethod
-    def log_in(self):
-        """Log in to server."""
-        pass
+        _LOGGER.debug("Getting catalogue of %s", self.name)
 
     @abc.abstractmethod
     def get_tests(self, problem):
-        """Return some form of problem tests"""  # TODO: Determine what to do here
-        pass
+        """Return some form of problem tests"""
+        _LOGGER.debug("Getting tests from %s", self.name)
 
     @abc.abstractmethod
     def load_problem(self, problem):
@@ -337,20 +355,19 @@ class CPClient(metaclass=abc.ABCMeta):
 
         Applicable e.g. for Codeforces, where we display problem in browser.
         """
-        pass
+        _LOGGER.debug("Loading %s problem: %s", self.name, problem)
 
     @abc.abstractmethod
     def submit_solution(self, problem, solution_path):
         """Submit a solution to the server."""
-        pass
+        _LOGGER.debug("Submitting solution to %s to %s", problem, self.name)
 
 
 class CodeforcesClient(CPClient):
-    NAME = "Codeforces"
-    PROBLEM_FORMAT_STRING = "{0[contestId]}/{0[index]}: {0[name]} (solved={0[solvedCount]})"
+    name = "Codeforces"
 
     def __init__(self, config):
-        config = config["codeforces"]
+        config = config[self.name]
 
         self._username = config["username"]
         self._password = config["password"]
@@ -376,12 +393,10 @@ class CodeforcesClient(CPClient):
         else:
             self._api_url = api_url
 
-        self._logged_in = False
-
         _LOGGER.debug("%s api_url = %s", self, self._api_url)
-        _LOGGER.debug("%s firing up chrome", self)
 
         self._client = None
+        self._logged_in = False
 
     def __del__(self):
         if self._client is not None:
@@ -389,25 +404,31 @@ class CodeforcesClient(CPClient):
             _LOGGER.debug("%s closing chrome", self)
             self._client.close()
 
-    def _start_client(self):
+    @property
+    def client(self):
         if self._client is None:
+            _LOGGER.debug("%s firing up chrome", self)
             chrome_options = selenium.webdriver.ChromeOptions()
             chrome_options.add_argument("-incognito")
             self._client = selenium.webdriver.Chrome(options=chrome_options)
+        return self._client
 
-    def log_in(self):
+    def _log_in(self):
         """Attempt to log in to the Codeforces website."""
-        username = self._username
-        password = self._password
-        enter_url = self._url + "enter"
-        self._client.get(enter_url)
-        enter_form = self._client.find_element_by_id("enterForm")
-        enter_form.find_element_by_id("handle").send_keys(username)
-        enter_form.find_element_by_id("password").send_keys(password)
-        enter_form.find_element_by_class_name("submit").click()
-        self._logged_in = self._client.current_url == self._url
+        if not self._logged_in:
+            enter_url = self._url + "enter"
+            self.client.get(enter_url)
+            enter_form = self.client.find_element_by_id("enterForm")
+            enter_form.find_element_by_id("handle").send_keys(self._username)
+            enter_form.find_element_by_id("password").send_keys(self._password)
+            enter_url = self.client.current_url
+            enter_form.find_element_by_class_name("submit").click()
+            while self.client.current_url == enter_url:
+                pass  # TODO: This loop is ridiculous, do something else to wait
+            self._logged_in = self._client.current_url == self._url
 
     def get_catalogue(self):
+        super().get_catalogue()
         _LOGGER.debug("Getting problems via %s", self._api_url)
         response = urllib.request.urlopen(self._api_url + "problemset.problems")
         if response.status == 200:
@@ -433,12 +454,17 @@ class CodeforcesClient(CPClient):
                 catalogue = ProblemContainer(
                     (
                         ProblemContainer(
-                            (Problem(problem, self.PROBLEM_FORMAT_STRING) for problem in problems.values()),
+                            (
+                                Problem(
+                                    problem,
+                                    "{0[contestId]}/{0[index]}: {0[name]} (solved={0[solvedCount]})",
+                                )
+                                for problem in problems.values()),
                             name=contest_id,
                         )
                         for contest_id, problems in contests.items()
                     ),
-                    name=self.NAME,
+                    name=self.name,
                 )
 
                 catalogue.sort(key=lambda contest: contest.name)
@@ -449,72 +475,35 @@ class CodeforcesClient(CPClient):
         raise ResponseError
 
     def load_problem(self, problem):
+        super().load_problem(problem)
         url = "{}problemset/problem/{}/{}".format(
             self._url,
-            problem.contest_id,
-            problem.index,
+            problem.obj["contestId"],
+            problem.obj["index"],
         )
         _LOGGER.debug("Getting %s", url)
-        if self._client.current_url != url:
-            self._client.get(url)
-            self._client.execute_script(
+        if self.client.current_url != url:
+            self.client.get(url)
+            self.client.execute_script(
                 "return arguments[0].scrollIntoView();",
-                self._client.find_element_by_class_name("problem-statement"),
+                self.client.find_element_by_class_name("problem-statement"),
             )
-            self._client.execute_script("window.scrollBy(-window.screenX, 0)")
+            self.client.execute_script("window.scrollBy(-window.screenX, 0)")
 
     def submit_solution(self, problem, solution_path):
+        super().submit_solution(problem, solution_path)
+        self._log_in()
         if solution_path.exists():
             self.load_problem(problem)
-            file_input = self._client.find_element_by_css_selector("input[name=sourceFile]")
+            file_input = self.client.find_element_by_css_selector("input[name=sourceFile]")
             file_input.send_keys(str(solution_path))  # TODO: str necessary?
-            submit_button = self._client.find_element_by_css_selector("input.submit")
-            self._client.execute_script("arguments[0].click();", submit_button)
+            submit_button = self.client.find_element_by_css_selector("input.submit")
+            self.client.execute_script("arguments[0].click();", submit_button)
 
     def get_tests(self, problem):
+        # TODO: Can easily be done without selenium
+        self._load_problem(problem)
         raise NotImplementedError
-
-#    def _codeforces(self):
-#        self._username = username
-#        self._password = password
-#
-#        self._key = key
-#        self._secret = secret
-#
-#        self._codeforces_client = CodeforcesClient(
-#            url=codeforces_url,
-#        )
-#
-#        self._codeforces_client.login(username, password)
-#
-#        # Store path, making sure it exists on file system as well
-#        self._path = path
-#        #path.mkdir(parents=True, exist_ok=True)
-#
-#        # Get contests TODO: This is prime material for asyncio
-#        self._contests = list(
-#            ContestItem(
-#                contest_id,
-#                (ProblemItem(problem) for problem in problems.values())
-#            )
-#            for contest_id, problems
-#            in self._codeforces_client.get_contests().items()
-#        )
-#        self._contests.sort(key=ContestItem.key_contest_id)
-#        for contest_item in self._contests:
-#            contest_item.sort(key=ProblemItem.key_index)
-#
-#        # Format string for the contest list
-#        self._contest_format_string = None
-#        self._problem_format_string = None
-#
-#
-#
-#
-#
-#        path = pathlib.Path(config["Local"]["path"]).expanduser()
-#
-#        _LOGGER.info("Got contest directory %s from config", path)
 
 
 #
@@ -523,12 +512,20 @@ class CodeforcesClient(CPClient):
 
 
 class Tool:
-
     def __init__(self, config):
         self._config = config
 
         # Store path
         self._path = pathlib.Path(config["cpc"]["path"]).expanduser()
+
+        # Store language to use
+        language_preferred = config["cpc"]["language"]
+        for programming_language in ProgrammingLanguage.__subclasses__():
+            if programming_language.name.startswith(language_preferred):
+                self._language = programming_language
+                break
+        else:
+            raise RuntimeError("Lacking support for preferred language")
 
         self._client = None
 
@@ -538,7 +535,7 @@ class Tool:
         self._stack = []
         self._current_selection = ProblemContainer(
             (
-                ProblemContainer(name=CodeforcesClient.NAME),
+                ProblemContainer(name=CodeforcesClient.name),
                 ProblemContainer(name="Kattis (Incoming)"),
                 ProblemContainer(name="Project Euler (Incoming)"),
                 ProblemContainer(name="ICPC (Incoming)"),
@@ -550,13 +547,14 @@ class Tool:
         self._ui = CursesUI(screen)
         self._ui.set_selection(self._current_selection)
         self.main()
+        screen.clear()
 
     def main(self):
 
         count = 0
         history = collections.deque(maxlen=3)
         command = ""
-        status_bar = ""
+        status_bar = None
 
         while True:
             _LOGGER.debug("Main loop iterating w/ history = %s", history)
@@ -573,28 +571,12 @@ class Tool:
 
             if command:
                 if c == ord("\n"):
-                    if command in (":q", ":wq", ":q!", ":wq!"):
-                        break
-
                     command = command.split()
-
-                    if ":edit".startswith(command[0]):
-                        status = self._ui.status
-                        selected = self._current_selection[status.index]
-                        if len(command) == 1:
-                            if isinstance(selected, Problem):
-                                self._edit(selected)
-                        elif len(command) == 2:
-                            # TODO: Different languages
-                            pass
-                        status_bar = ""
-                    elif ":submit".startswith(command[0]):
-                        status = self._ui.status
-                        selected = self._current_selection[status.index]
-                    elif ":test".startswith(command[0]):
-                        pass
-                    else:
-                        status_bar = "Not a command"
+                    if "q" in command[0] and set(command[0]).issubset(":wqa!"):
+                        break  # TODO: This has to be done smarter
+                    status = self._ui.status
+                    selected = self._current_selection[status.index]
+                    status_bar = self._handle_command(command, selected)
                     command = ""
                 elif c == curses.KEY_BACKSPACE:
                     command = command[:len(command) - 1]
@@ -610,7 +592,6 @@ class Tool:
             if c in range(ord("0"), ord("9") + 1):
                 count = 10*count + (c - ord("0"))
                 _LOGGER.debug("This causes the count to become %s", count)
-                history.appendleft(c)
                 continue
 
             # The resizing is a bit of a special case
@@ -662,6 +643,11 @@ class Tool:
             else:
                 pass
 
+            # Beyond this point we do three things:
+            #   - Set count back to zero
+            #   - Set the status bar of the UI
+            #   - Add to the history (unless told otherwise)
+
             count = 0
             try:
                 self._ui.set_status_bar(status_bar)
@@ -669,6 +655,59 @@ class Tool:
                 self._ui.set_status_bar("")
             if add_to_history:
                 history.appendleft(c)
+
+    def _get_paths(self, problem):
+        """Return problem path and solution path."""
+        problem_path = self._path/self._client.name/problem.path
+        problem_path.mkdir(parents=True, exist_ok=True)
+        solution_file_name = "solution" + self._language.extension
+        solution_path = problem_path/solution_file_name
+        return problem_path, solution_path
+
+    #
+    # The rest of the methods are mostly regarding the handling of commands
+    #
+
+    def _handle_command(self, command, selected):
+
+        _LOGGER.debug("Handling command sequence %s", command)
+
+        status_bar = ""
+        non_command = False
+
+        # All commands are in the context of a problem right now TODO
+        if not isinstance(selected, Problem):
+            _LOGGER.debug("%s is not a Problem, so do nothing")
+            non_command = True
+        # The edit command
+        elif EDIT.startswith(command[0]):
+            if len(command) == 1:
+                self._edit(selected)
+            else:
+                non_command = True
+        # The submit command
+        elif SUBMIT.startswith(command[0]):
+            if len(command) == 1:
+                self._submit(selected)
+            else:
+                non_command = True
+        # The compile command
+        elif COMPILE.startswith(command[0]):
+            if len(command) == 1:
+                self._compile(selected)
+            else:
+                non_command = True
+        # The test command
+        elif TEST.startswith(command[0]):
+            non_command = not self._test(command, selected)
+        # Catchall
+        else:
+            non_command = True
+
+        if non_command:
+            status_bar = "Not a command"
+
+        return status_bar
 
     def _go_up_level(self):
         if self._stack:
@@ -688,38 +727,56 @@ class Tool:
         if isinstance(selected, ProblemContainer):
             _LOGGER.debug("Move into container")
             if not self._stack:
-                # TODO: Too hardcoded, but not too far from being good
-                if selected.name == CodeforcesClient.NAME:
-                    self._client = CodeforcesClient(self._config)
-                    _LOGGER.debug("Codeforces client = %s", self._client)
-                    if not selected:
-                        selected = self._client.get_catalogue()
-                    self._current_selection[status.index] = selected
+                _LOGGER.debug("Container is representative of server")
+                for client_class in CPClient.__subclasses__():
+                    if selected.name == client_class.name:
+                        self._client = client_class(self._config)
+                        _LOGGER.debug("Instantiated client %s", self._client)
+                        break
                 else:
-                    return  # TODO: Implement other clients
+                    _LOGGER.debug("Unable to find an appropriate client Class")
+                    return
+                if not selected:
+                    # Catalogue not yet loaded
+                    self._ui.set_loading()
+                    selected = self._client.get_catalogue()
+                self._current_selection[status.index] = selected
             self._current_selection.status = status
             self._stack.append(self._current_selection)
             self._current_selection = selected
             self._ui.set_selection(selected, status=selected.status)
         elif isinstance(selected, Problem):
-            _LOGGER.debug("Delegate to edit method")
+            _LOGGER.debug("Load problem")
             self._client.load_problem(selected)
-            self._edit(selected)
         else:
             _LOGGER.warning("Unexpected, do nothing")
-            pass
 
     def _edit(self, problem):
-        problem_path = self._path/self._client.NAME/problem.path
-        problem_path.mkdir(parents=True, exist_ok=True)
-        solution_path = problem_path/"solution.py"
-        solution_path.touch(exist_ok=True)
+        _, solution_path = self._get_paths(problem)
         subprocess.call(["vim", str(solution_path)])
         self._ui.refresh()  # To avoid residual effects
 
     def _submit(self, problem):
-        solution_path = self._path/self._client.NAME/problem.path/"solution.py"
+        _, solution_path = self._get_paths(problem)
         self._client.submit_solution(problem, solution_path)
+
+    def _test(self, command, problem):
+        if len(command) == 1:
+            _, solution_path = self._get_paths(problem)
+            compiled_file = self._language.compile(solution_path)
+            # TODO: Implement testing
+        elif len(command) == 2:
+            if "new".startswith(command[1]):
+                pass  # Create new test files
+            elif "load".startswith(command[1]):
+                pass  # Load tests from server
+            else:
+                pass
+        return False
+
+    def _compile(self, problem):
+        _, solution_path = self._get_paths(problem)
+        return self._language.compile(solution_path)
 
 
 def _main():
