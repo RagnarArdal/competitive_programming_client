@@ -1,7 +1,6 @@
 # cpc: Competitive Programming Client
 
-Competitive Programming Client (`cpc`) is a part-console part-webbrowser client to do competitive programming.
-It is written in the Python 3 programming language and cross-platform (MAC, Windows, Linux, ...).
+Competitive Programming Client (`cpc`) is a cross-platform (MAC, Windows, Linux, ...) Python 3 part-console part-webbrowser client for competitive programming.
 
 
 ## Setup
@@ -30,10 +29,14 @@ Open the file up and set up your credentials.
 Use standard `vim` controls to move around.
 
 Find the problem you want to tackle and run any of the commands:
-* `:edit`: Edit your solution
-* `:test`: NOT YET IMPLEMENTED
-* `:submit`: Submit your solution
-* `:compile`: Compile your solution
+* `:edit`
+	* Edit your solution
+* `:test`
+	* NOT YET IMPLEMENTED
+* `:submit`
+	* Submit your solution
+* `:compile`:
+	* Compile your solution
 
 
 ## TODO
